@@ -3,37 +3,37 @@ from tkinter import messagebox
 import pyperclip
 import os
 import base64
-import json
 import secrets
 import string
 import time
-from datetime import datetime
 from crypto import derive_key, generate_vault_key, wrap_key, unwrap_key, encrypt, decrypt
+from vault import vault_exists, load_vault, save_vault, init_vault
 
-# Check if vault exists and create if needed
-VAULT_FILE = "vault.json"
+# How long a copied password/recovery code stays on the clipboard before
+# VaultX wipes it automatically. Only clears if the clipboard still holds
+# exactly what we put there, so we never stomp on something the user copied
+# from elsewhere afterwards.
+CLIPBOARD_CLEAR_SECONDS = 20
 
-def vault_exists():
-    return os.path.exists(VAULT_FILE)
+# Recovery codes are the "second password" into the vault, so they need
+# real entropy: 6 bytes = 12 hex chars = 48 bits, which keeps offline
+# guessing infeasible even against the 600,000-iteration KDF below.
+RECOVERY_CODE_BYTES = 6
 
-def load_vault():
-    with open(VAULT_FILE, 'r') as f:
-        return json.load(f)
 
-def save_vault(vault):
-    with open(VAULT_FILE, 'w') as f:
-        json.dump(vault, f, indent=2)
+def copy_with_autoclear(widget, text: str, seconds: int = CLIPBOARD_CLEAR_SECONDS):
+    """Copy sensitive text to the clipboard and wipe it again after a delay."""
+    pyperclip.copy(text)
 
-def init_vault(salt_b64, wrapped_vault_key):
-    vault = {
-        "salt": salt_b64,
-        "vault_key": wrapped_vault_key,   # vault key wrapped under master key
-        "entries": {},
-        "recovery_codes": [],
-        "created_at": datetime.now().isoformat()
-    }
-    save_vault(vault)
-    return vault
+    def _clear():
+        try:
+            if pyperclip.paste() == text:
+                pyperclip.copy("")
+        except Exception:
+            pass
+
+    widget.after(seconds * 1000, _clear)
+
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
@@ -349,7 +349,7 @@ class LoginScreen(ctk.CTkFrame):
         """
         codes = []
         for _ in range(10):
-            code = secrets.token_hex(4).upper()  # 8 hex chars = 32-bit entropy
+            code = secrets.token_hex(RECOVERY_CODE_BYTES).upper()  # 48-bit entropy
             code_salt = os.urandom(16)
             code_key = derive_key(code, code_salt)
             wrapped_vault_key = wrap_key(code_key, vault_key)
@@ -398,10 +398,10 @@ class LoginScreen(ctk.CTkFrame):
                           fg_color="transparent", hover_color=RED_DIM,
                           border_width=1, border_color=BORDER,
                           text_color=MUTED, corner_radius=6, font=(FONT, 11),
-                          command=lambda c=code_data["code"]: pyperclip.copy(c)).pack(side="right")
+                          command=lambda c=code_data["code"]: copy_with_autoclear(dialog, c)).pack(side="right")
 
         def _copy_all_creation():
-            pyperclip.copy("\n".join(c["code"] for c in codes))
+            copy_with_autoclear(dialog, "\n".join(c["code"] for c in codes))
 
         btn_row = ctk.CTkFrame(container, fg_color="transparent")
         btn_row.pack(fill="x", pady=(16, 0))
@@ -549,9 +549,12 @@ class MainApp(ctk.CTkFrame):
         # Search
         self.search_var = ctk.StringVar()
         self.search_var.trace("w", lambda *a: self._refresh_list())
-        ctk.CTkEntry(header, height=34, placeholder_text="🔍 Search entries...", textvariable=self.search_var, fg_color=CARD, 
-                     border_color=BORDER, border_width=1, corner_radius=6, text_color=TEXT, placeholder_text_color=MUTED, 
-                     font=(FONT, 12)).pack(fill="x", padx=20, pady=(0, 8))
+        search_row = ctk.CTkFrame(header, fg_color="transparent")
+        search_row.pack(fill="x", padx=20, pady=(0, 8))
+        ctk.CTkLabel(search_row, text="Search", font=(FONT, 12, "bold"), text_color=MUTED).pack(side="left", padx=(0, 8))
+        ctk.CTkEntry(search_row, height=34, placeholder_text="🔍 Search entries...", textvariable=self.search_var, fg_color=CARD,
+                     border_color=BORDER, border_width=1, corner_radius=6, text_color=TEXT, placeholder_text_color=MUTED,
+                     font=(FONT, 12)).pack(side="left", fill="x", expand=True)
 
         # Separator
         ctk.CTkFrame(panel, height=1, fg_color=BORDER).pack(fill="x")
@@ -848,8 +851,8 @@ class MainApp(ctk.CTkFrame):
         """Copy the generated password to clipboard."""
         password = self.gen_result_var.get()
         if password:
-            pyperclip.copy(password)
-            self._toast("Generated password copied to clipboard.")
+            copy_with_autoclear(self, password)
+            self._toast(f"Copied. Clears in {CLIPBOARD_CLEAR_SECONDS}s.")
     
     def _show_recovery_codes(self):
         """Display recovery codes to the user."""
@@ -902,12 +905,12 @@ class MainApp(ctk.CTkFrame):
                               fg_color="transparent", hover_color=RED_DIM,
                               border_width=1, border_color=BORDER,
                               text_color=MUTED, corner_radius=6, font=(FONT, 11),
-                              command=lambda c=code_data["code"]: pyperclip.copy(c)).pack(side="right")
+                              command=lambda c=code_data["code"]: copy_with_autoclear(dialog, c)).pack(side="right")
 
         def _copy_all_settings():
             available = [c["code"] for c in decrypted_codes if not c["used"]]
             if available:
-                pyperclip.copy("\n".join(available))
+                copy_with_autoclear(dialog, "\n".join(available))
 
         btn_row = ctk.CTkFrame(container, fg_color="transparent")
         btn_row.pack(fill="x", pady=(16, 0))
@@ -932,7 +935,7 @@ class MainApp(ctk.CTkFrame):
 
         codes = []
         for _ in range(10):
-            code = secrets.token_hex(4).upper()
+            code = secrets.token_hex(RECOVERY_CODE_BYTES).upper()
             code_salt = os.urandom(16)
             code_key = derive_key(code, code_salt)
             wrapped_vault_key = wrap_key(code_key, self.key)
@@ -1029,8 +1032,8 @@ class MainApp(ctk.CTkFrame):
     def _copy_password(self, service: str):
         try:
             password = decrypt(self.key, self.vault["entries"][service]["password"])
-            pyperclip.copy(password)
-            self._toast(f"'{service}' password copied to clipboard.")
+            copy_with_autoclear(self, password)
+            self._toast(f"'{service}' copied. Clears in {CLIPBOARD_CLEAR_SECONDS}s.")
         except Exception as e:
             messagebox.showerror("Error", f"Decryption failed: {str(e)}")
 
@@ -1188,7 +1191,7 @@ class RecoveryScreen(ctk.CTkToplevel):
         ctk.CTkLabel(self._frame, text="Recovery Code", font=(FONT, 12), text_color=MUTED).pack(anchor="w")
         self.code_var = ctk.StringVar()
         code_entry = ctk.CTkEntry(self._frame, height=42,
-                                  placeholder_text="e.g. A1B2C3D4",
+                                  placeholder_text="e.g. A1B2C3D4E5F6",
                                   textvariable=self.code_var,
                                   fg_color=CARD, border_color=BORDER, border_width=1,
                                   corner_radius=8, text_color=TEXT,

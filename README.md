@@ -1,139 +1,154 @@
-# 🔐 VaultX - Secure Password Manager
+# VaultX — Secure Password Manager
 
-A modern, encrypted password vault with both GUI and CLI interfaces.
-Passwords are protected with AES-256-GCM and the master password is
-never stored — only a derived key via PBKDF2.
-
----
+VaultX is a local password manager written in Python. It started as a CLI password manager and now provides both a desktop GUI and CLI using the same encrypted vault format.
 
 ## Features
 
-- 🔒 **Military-grade encryption** — AES-256-GCM with unique nonces per entry
-- 🔑 **Strong key derivation** — PBKDF2 with 600,000 iterations (NIST recommended)
-- 🛡️ **Tamper detection** — GCM authentication tags prevent undetected modification
-- 🎨 **Modern GUI** — Dark-themed interface built with CustomTkinter
-- 📋 **Clipboard integration** — One-click password copying
-- 🔄 **Password re-encryption** — Seamless master password changes
-- ⏱️ **Auto-lock** — Vault locks after user-defined inactivity
-- 🔑 **Password generator** — Generate strong, random passwords
-- 📊 **Password strength meter** — Real-time feedback on password quality
-- 🔐 **Recovery codes** — 10 one-time use codes for account recovery
-- 📦 **Zero-trust architecture** — Master password never stored or transmitted
-- 🖥️ **CLI & GUI** — Same security model, two interfaces
+- AES-256-GCM authenticated encryption
+- PBKDF2-HMAC-SHA256 key derivation
+- Random 256-bit vault key
+- Vault key wrapped by the master-password-derived key
+- Recovery-code based vault-key recovery
+- Password generator and strength feedback
+- Clipboard integration with automatic clearing (20s, only if you haven't copied something else since)
+- Configurable auto-lock
+- GUI and CLI interfaces
+- Windows executable build with PyInstaller
 
----
+## Security model
 
-## Security Model
-
+```text
+Master password
+      │
+      ▼
+PBKDF2-HMAC-SHA256 + random salt
+      │
+      ▼
+256-bit master key
+      │
+      ▼
+AES-256-GCM key wrapping
+      │
+      ▼
+256-bit vault key
+      │
+      ▼
+AES-256-GCM encryption of entries
+      │
+      ▼
+vault.json
 ```
-Master Password + Unique Salt
-│
-▼
-PBKDF2-SHA256
-(600,000 iterations)
-│
-▼
-256-bit AES Key ──► AES-256-GCM ──► vault.json
-│
-▼
-Per-entry random nonce + Authentication tag
-```
 
----
+The master password is not stored. The vault contains the salt and an authenticated, encrypted copy of the vault key. Password entries are encrypted with the vault key.
 
-## Quick Start
+## Run from source
 
-### Installation
+### Requirements
+
+- Python 3.12+
+- Windows, macOS, or Linux for the Python application
+- Python packages listed in `requirements.txt`
+
+### Install
 
 ```bash
-# Clone the repository
-git clone https://github.com/HananFt/secure-password-manager.git
-cd secure-password-manager
+git clone https://github.com/HananFt/VaultX-secure-password-manager.git
+cd VaultX-secure-password-manager
 
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+venv\Scripts\activate        # Windows
+# source venv/bin/activate    # macOS/Linux
 
-# Install dependencies
-pip install cryptography customtkinter pyperclip
+pip install -r requirements.txt
 ```
 
-### Usage
+### Start
 
-**GUI (Recommended)**
+GUI:
+
 ```bash
 python app.py
 ```
 
-**CLI (Terminal)**
+CLI:
+
 ```bash
 python manager.py
 ```
 
-### First-Time Setup
+On first use, VaultX creates `vault.json` locally. That file is intentionally ignored by Git because it contains your encrypted vault and recovery data.
 
-On first run, you'll be prompted to:
+## Build the Windows executable
 
-1. Create a master password (minimum 8 characters)
-2. Receive 10 recovery codes — store them securely!
-3. A `vault.json` file is created locally
-4. Add your first password entry
+The repository keeps the **source and build configuration** in Git, not generated build output.
 
----
+On Windows:
 
-## Project Structure
-
+```text
+build_exe.bat
 ```
-secure-password-manager/
-├── app.py           # GUI application (CustomTkinter)
-├── manager.py       # CLI interface
-├── crypto.py        # Core encryption logic
-├── vault.py         # Vault storage operations
+
+The script creates/uses `venv`, installs the build dependencies, and produces:
+
+```text
+dist/VaultX.exe
+```
+
+The executable is a PyInstaller one-file application and can be launched by double-clicking it.
+
+## GitHub distribution
+
+`VaultX.exe` should normally **not be committed to the Git repository**. GitHub Releases are the cleaner place for compiled binaries.
+
+The included GitHub Actions workflow:
+
+- builds the Windows executable on manual workflow runs
+- builds automatically when a tag such as `v1.0.0` is pushed
+- attaches the executable to the GitHub Release for version tags
+
+## Project structure
+
+```text
+VaultX-secure-password-manager/
+├── app.py
+├── manager.py
+├── crypto.py
+├── vault.py
+├── launcher.py
+├── vault.ico
+├── VaultX.spec
 ├── requirements.txt
+├── requirements-build.txt
+├── build_exe.bat
+├── .gitignore
+├── .github/
+│   └── workflows/
+│       └── build-windows.yml
 └── README.md
 ```
 
----
+Generated/local files are intentionally excluded:
 
-## Technical Stack
+```text
+venv/
+build/
+dist/
+vault.json
+__pycache__/
+```
 
-| Component | Technology |
-|-----------|------------|
-| Language | Python 3.12+ |
-| Encryption | AES-256-GCM, PBKDF2-HMAC-SHA256 |
-| GUI | CustomTkinter |
-| Platform | Cross-platform (Windows, macOS, Linux) |
+## Important security notes
 
----
-
-## Feature Status
-
-| Feature | Status | Location |
-|---------|--------|----------|
-| Auto-lock Timer | ✅ Implemented | Settings → Auto-lock Timer (configurable) |
-| Password Generator | ✅ Implemented | Settings → Password Generator & Add Entry dialog |
-| Password Strength Meter | ✅ Implemented | Login, Add Entry, Settings |
-| Recovery Codes | ✅ Implemented | Created on vault creation, viewable in Settings |
-
----
-
-## Security Notes
-
-- The vault salt is stored in plaintext (non-secret by design)
-- Each password entry uses a unique 12-byte random nonce
-- GCM authentication prevents tampering — modified vaults fail decryption
-- Master password is never written to disk or logged
-- Clipboard contents are cleared after 30 seconds
-- Recovery codes are encrypted with the master password
-
----
+- `vault.json` is encrypted, but it is still sensitive. Do not publish it.
+- The master password is not recoverable by design; recovery codes are the recovery mechanism implemented by VaultX.
+- The executable is a convenience distribution of the Python application, not a different security layer.
+- The cryptographic design should be independently reviewed before treating VaultX as production-grade password-management software.
+- Writes to `vault.json` are atomic (written to a temp file, then renamed over the original), so an app crash or power loss mid-save can't leave you with a corrupted vault.
 
 ## License
 
 MIT
 
----
-
 ## Author
 
-**HananFt** — [GitHub](https://github.com/HananFt)
+**HananFt**

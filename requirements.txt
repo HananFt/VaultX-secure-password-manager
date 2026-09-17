@@ -1,0 +1,3 @@
+cryptography>=49,<50
+customtkinter>=5.2,<6
+pyperclip>=1.11,<2
