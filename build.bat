@@ -9,9 +9,9 @@ if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 if exist installer_output rmdir /s /q installer_output
 
-:: 2. Build the executable with PyInstaller
+:: 2. Build the executable with PyInstaller (Using python -m to avoid PATH issues)
 echo [2/3] Compiling Python to EXE...
-pyinstaller VaultX.spec --noconfirm
+python -m PyInstaller VaultX.spec --noconfirm
 if %errorlevel% neq 0 (
     echo ERROR: PyInstaller failed!
     pause
@@ -20,8 +20,6 @@ if %errorlevel% neq 0 (
 
 :: 3. Build the Installer with Inno Setup
 echo [3/3] Creating Windows Installer...
-:: Note: This assumes Inno Setup 6 is installed in the default directory.
-:: If it fails, ensure Inno Setup is installed and update the path below.
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 if %errorlevel% neq 0 (
     echo ERROR: Inno Setup failed! Is Inno Setup 6 installed?
