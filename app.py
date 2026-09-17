@@ -1337,13 +1337,25 @@ class App(ctk.CTk):
         self.resizable(False, False)
         self.configure(fg_color=BG)
 
+        # --- FIX FOR WINDOW ICON ---
+        # Resolve the correct path to vault.ico whether running as a script or compiled .exe
         try:
-            self.iconbitmap("vault.ico")
+            import sys
+            import os
+            if getattr(sys, 'frozen', False):
+                # Running as compiled PyInstaller executable
+                base_path = sys._MEIPASS
+            else:
+                # Running as normal Python script
+                base_path = os.path.abspath(os.path.dirname(__file__))
+            
+            icon_path = os.path.join(base_path, "vault.ico")
+            self.iconbitmap(icon_path)
         except Exception:
-            pass
+            pass  # Fallback to default feather icon if vault.ico is somehow missing
+        # -----------------------------
 
         LoginScreen(self, lambda key, vault: MainApp(self, key, vault))
-
 
 if __name__ == "__main__":
     App().mainloop()
