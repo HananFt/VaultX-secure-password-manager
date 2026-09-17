@@ -2,12 +2,15 @@ name: Build Windows Executable
 
 on:
   push:
+    branches: [ main ]
     tags:
       - 'v*.*.*'
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  build:
+  test-and-build:
     runs-on: windows-latest
     
     steps:
@@ -25,8 +28,16 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
 
+    - name: Run Security Linter (Bandit)
+      run: |
+        bandit -r . -ll -ii
+
+    - name: Run Automated Tests (Pytest)
+      run: |
+        pytest tests/ -v
+
     - name: Build Executable with PyInstaller
-      run: pyinstaller VaultX.spec --noconfirm
+      run: python -m PyInstaller VaultX.spec --noconfirm
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
@@ -40,5 +51,6 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: dist/VaultX.exe
+        generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
