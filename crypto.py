@@ -1,23 +1,28 @@
 import os
 import base64
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
+from argon2.low_level import hash_secret_raw, Type
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+# Argon2id parameters (OWASP recommended for password hashing)
+ARGON2_TIME_COST = 3
+ARGON2_MEMORY_COST = 65536  # 64 MB
+ARGON2_PARALLELISM = 4
+ARGON2_HASH_LEN = 32  # 256-bit key
 
 def derive_key(password: str, salt: bytes) -> bytes:
     """
-    Turns a master password + salt into a 32-byte (256-bit) AES key.
-    - password: what the user types
-    - salt: random bytes stored in the vault (not secret, but must be unique)
-    - 600,000 iterations: makes brute-forcing take ~minutes per guess instead of microseconds
+    Turns a master password + salt into a 32-byte (256-bit) AES key
+    using Argon2id. This is memory-hard and resists GPU/ASIC brute-force attacks.
     """
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
+    return hash_secret_raw(
+        secret=password.encode('utf-8'),
         salt=salt,
-        iterations=600_000,
+        time_cost=ARGON2_TIME_COST,
+        memory_cost=ARGON2_MEMORY_COST,
+        parallelism=ARGON2_PARALLELISM,
+        hash_len=ARGON2_HASH_LEN,
+        type=Type.ID
     )
-    return kdf.derive(password.encode())
 
 def generate_vault_key() -> bytes:
     """Generate a random 32-byte vault key. This key encrypts all entries."""
@@ -25,9 +30,7 @@ def generate_vault_key() -> bytes:
 
 def wrap_key(wrapping_key: bytes, vault_key: bytes) -> dict:
     """
-    Encrypt the vault key with a wrapping key (derived from master password
-    or a recovery code). Returns a dict with nonce + ciphertext.
-    This is the KEY WRAP operation — same AES-GCM, just encrypting raw bytes.
+    Encrypt the vault key with a wrapping key. Returns a dict with nonce + ciphertext.
     """
     nonce = os.urandom(12)
     aesgcm = AESGCM(wrapping_key)
@@ -50,13 +53,11 @@ def unwrap_key(wrapping_key: bytes, wrapped: dict) -> bytes:
 def encrypt(key: bytes, plaintext: str) -> dict:
     """
     Encrypts a string using AES-256-GCM.
-    Returns a dict with the nonce + ciphertext (both base64-encoded for JSON storage).
-    - nonce: a random 12-byte number used ONCE per encryption. Never reuse a nonce!
-    - GCM mode produces a 'tag' appended to ciphertext that detects any tampering
+    Returns a dict with the nonce + ciphertext (both base64-encoded).
     """
     nonce = os.urandom(12)
     aesgcm = AESGCM(key)
-    ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
+    ciphertext = aesgcm.encrypt(nonce, plaintext.encode('utf-8'), None)
     return {
         "nonce": base64.b64encode(nonce).decode(),
         "ciphertext": base64.b64encode(ciphertext).decode()
@@ -64,11 +65,10 @@ def encrypt(key: bytes, plaintext: str) -> dict:
 
 def decrypt(key: bytes, encrypted: dict) -> str:
     """
-    Reverses encrypt(). Takes the same dict and returns the original string.
-    Raises an exception if the key is wrong OR if the data was tampered with.
+    Reverses encrypt(). Raises an exception if the key is wrong or data is tampered.
     """
     nonce = base64.b64decode(encrypted["nonce"])
     ciphertext = base64.b64decode(encrypted["ciphertext"])
     aesgcm = AESGCM(key)
     plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-    return plaintext.decode()
+    return plaintext.decode('utf-8')
