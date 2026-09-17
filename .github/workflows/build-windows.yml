@@ -1,41 +1,44 @@
-name: Build Windows executable
+name: Build Windows Executable
 
 on:
-  workflow_dispatch:
   push:
     tags:
-      - "v*"
-
-permissions:
-  contents: write
+      - 'v*.*.*'
+  workflow_dispatch:
 
 jobs:
-  build-windows:
+  build:
     runs-on: windows-latest
-
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
 
-      - name: Install dependencies
-        run: python -m pip install -r requirements-build.txt
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
 
-      - name: Build executable
-        run: python -m PyInstaller --clean --noconfirm VaultX.spec
+    - name: Build Executable with PyInstaller
+      run: pyinstaller VaultX.spec --noconfirm
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: VaultX-Windows
-          path: dist/VaultX.exe
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: VaultX-Executable
+        path: dist/VaultX.exe
 
-      - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ github.ref_name }}" "dist/VaultX.exe" --title "${{ github.ref_name }}" --generate-notes
+    # If triggered by a tag, create a GitHub Release
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/VaultX.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
