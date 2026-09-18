@@ -30,7 +30,8 @@ jobs:
 
     - name: Run Security Linter (Bandit)
       run: |
-        bandit -r . -ll -ii
+        # Exclude tests/ directory to prevent Bandit from failing on standard pytest 'assert' statements
+        bandit -r . -ll -ii -x tests/
 
     - name: Run Automated Tests (Pytest)
       run: |
