@@ -8,9 +8,7 @@ The security of VaultX is a top priority. If you discover a security vulnerabili
 
 **Do not open a public GitHub Issue for security vulnerabilities.**
 
-Instead, please report it via:
-1. **GitHub Security Advisories**: Go to the "Security" tab of this repository and click "Report a vulnerability".
-2. **Email**: Send details to [YOUR_EMAIL_HERE@example.com] (Optional: replace with your actual email or remove this line).
+Instead, please report it via **GitHub Security Advisories**: go to the "Security" tab of this repository and click "Report a vulnerability". This opens a private channel with the maintainer and is the preferred way to report anything sensitive.
 
 ### What to include in your report:
 - A clear description of the vulnerability.

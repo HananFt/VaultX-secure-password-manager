@@ -5,15 +5,16 @@ VaultX is a local password manager written in Python. It started as a CLI passwo
 ## Features
 
 - AES-256-GCM authenticated encryption
-- PBKDF2-HMAC-SHA256 key derivation
+- Argon2id key derivation (memory-hard, OWASP-recommended parameters)
 - Random 256-bit vault key
 - Vault key wrapped by the master-password-derived key
 - Recovery-code based vault-key recovery
 - Password generator and strength feedback
+- Breach checking against Have I Been Pwned (k-anonymity API, password never leaves your device)
 - Clipboard integration with automatic clearing (20s, only if you haven't copied something else since)
 - Configurable auto-lock
 - GUI and CLI interfaces
-- Windows executable build with PyInstaller
+- Windows executable build with PyInstaller, plus an optional Inno Setup installer
 
 ## Security model
 
@@ -21,7 +22,7 @@ VaultX is a local password manager written in Python. It started as a CLI passwo
 Master password
       │
       ▼
-PBKDF2-HMAC-SHA256 + random salt
+Argon2id (memory-hard) + random salt
       │
       ▼
 256-bit master key
@@ -85,16 +86,12 @@ The repository keeps the **source and build configuration** in Git, not generate
 On Windows:
 
 ```text
-build_exe.bat
+build.bat
 ```
 
-The script creates/uses `venv`, installs the build dependencies, and produces:
+The script compiles the app with PyInstaller into `dist/VaultX.exe`, then (if Inno Setup 6 is installed) packages it into a proper Windows installer at `installer_output/VaultX-Setup.exe`.
 
-```text
-dist/VaultX.exe
-```
-
-The executable is a PyInstaller one-file application and can be launched by double-clicking it.
+The executable is a PyInstaller one-file application and can be launched by double-clicking it, with or without the installer.
 
 ## GitHub distribution
 
@@ -114,12 +111,17 @@ VaultX-secure-password-manager/
 ├── manager.py
 ├── crypto.py
 ├── vault.py
+├── hibp.py
 ├── launcher.py
 ├── vault.ico
 ├── VaultX.spec
+├── installer.iss
 ├── requirements.txt
 ├── requirements-build.txt
-├── build_exe.bat
+├── build.bat
+├── tests/
+├── SECURITY.md
+├── THREAT_MODEL.md
 ├── .gitignore
 ├── .github/
 │   └── workflows/
