@@ -13,9 +13,10 @@ vault.json
 # Logs
 *.log
 
-# PyInstaller output
+# PyInstaller & Build output
 build/
 dist/
+installer_output/
 
 # IDE / editor
 .vscode/

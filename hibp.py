@@ -10,8 +10,9 @@ def check_password_breach(password: str) -> int:
         int: Number of times the password was found in breaches.
              0 means safe. -1 means the network check failed (fail securely).
     """
-    # 1. Hash the password with SHA-1
-    sha1_hash = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
+    
+    # 1. Hash the password with SHA-1 (Required by HIBP k-Anonymity API)
+    sha1_hash = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()  # nosec B324
     
     # 2. Split into prefix (5 chars) and suffix (remaining 35 chars)
     prefix = sha1_hash[:5]
