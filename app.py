@@ -5,9 +5,11 @@ import os
 import base64
 import secrets
 import string
+import threading
 import time
 from crypto import derive_key, generate_vault_key, wrap_key, unwrap_key, encrypt, decrypt
 from vault import vault_exists, load_vault, save_vault, init_vault
+from hibp import check_password_breach
 
 # How long a copied password/recovery code stays on the clipboard before
 # VaultX wipes it automatically. Only clears if the clipboard still holds
@@ -17,7 +19,7 @@ CLIPBOARD_CLEAR_SECONDS = 20
 
 # Recovery codes are the "second password" into the vault, so they need
 # real entropy: 6 bytes = 12 hex chars = 48 bits, which keeps offline
-# guessing infeasible even against the 600,000-iteration KDF below.
+# guessing infeasible even against the memory-hard Argon2id KDF below.
 RECOVERY_CODE_BYTES = 6
 
 
@@ -587,7 +589,10 @@ class MainApp(ctk.CTkFrame):
         if hasattr(self, "count_label"):
             self.count_label.configure(text=f"{count} {'entry' if count == 1 else 'entries'}")
 
-        filtered = {k: v for k, v in entries.items() if not query or query in k.lower()}
+        filtered = {
+            k: v for k, v in entries.items()
+            if not query or query in k.lower() or query in v.get("username", "").lower()
+        }
 
         if not filtered:
             msg = "No results found." if query else "🔐 No entries yet.\nClick '+ Add Entry' to get started."
@@ -624,7 +629,12 @@ class MainApp(ctk.CTkFrame):
         ctk.CTkButton(btn_frame, text="Copy", width=54, height=32, command=lambda s=service: self._copy_password(s), 
                       fg_color="transparent", hover_color=RED_DIM, border_width=1, border_color=BORDER, text_color=MUTED, 
                       corner_radius=6, font=(FONT, 11)).pack(side="left", padx=(0, 6))
-        
+
+        # Edit button
+        ctk.CTkButton(btn_frame, text="Edit", width=44, height=32, command=lambda s=service: self._open_edit_dialog(s),
+                      fg_color="transparent", hover_color=RED_DIM, border_width=1, border_color=BORDER, text_color=MUTED,
+                      corner_radius=6, font=(FONT, 11)).pack(side="left", padx=(0, 6))
+
         # Delete button
         ctk.CTkButton(btn_frame, text="✕", width=32, height=32, command=lambda s=service: self._delete_entry(s), 
                       fg_color="transparent", hover_color=RED_DIM, border_width=1, border_color=BORDER, text_color=MUTED, 
@@ -1047,6 +1057,14 @@ class MainApp(ctk.CTkFrame):
     def _open_add_dialog(self):
         AddEntryDialog(self, self.key, self.vault, self._refresh_list, self._update_info_panel)
 
+    def _open_edit_dialog(self, service: str):
+        try:
+            current_password = decrypt(self.key, self.vault["entries"][service]["password"])
+        except Exception as e:
+            messagebox.showerror("Error", f"Decryption failed: {str(e)}")
+            return
+        EditEntryDialog(self, self.key, self.vault, service, current_password, self._refresh_list, self._update_info_panel)
+
     def _lock(self):
         # Cancel timer and remove root-level bindings before hiding
         if self._lock_timer:
@@ -1117,8 +1135,9 @@ class AddEntryDialog(ctk.CTkToplevel):
         self.err_var = ctk.StringVar()
         ctk.CTkLabel(container, textvariable=self.err_var, text_color=RED, font=(FONT, 11), height=18).pack(anchor="w", pady=(4, 0))
 
-        ctk.CTkButton(container, text="Save Entry", command=self._save, height=40, fg_color=RED, hover_color=RED_HOV, 
-                      text_color="white", corner_radius=6, font=(FONT, 13, "bold")).pack(fill="x", pady=(8, 0))
+        self.save_btn = ctk.CTkButton(container, text="Save Entry", command=self._save, height=40, fg_color=RED, hover_color=RED_HOV, 
+                      text_color="white", corner_radius=6, font=(FONT, 13, "bold"))
+        self.save_btn.pack(fill="x", pady=(8, 0))
 
     def _save(self):
         service = self.svc_var.get().strip().lower()
@@ -1131,6 +1150,164 @@ class AddEntryDialog(ctk.CTkToplevel):
         if service in self.vault["entries"]:
             self.err_var.set(f"'{service}' already exists.")
             return
+
+        # Check the password against Have I Been Pwned before saving. The
+        # check runs on a background thread so the dialog doesn't freeze
+        # while waiting on the network.
+        self.err_var.set("")
+        self.save_btn.configure(state="disabled", text="Checking for breaches...")
+
+        def worker():
+            count = check_password_breach(password)
+            if self.winfo_exists():
+                self.after(0, lambda: self._on_breach_checked(count, service, username, password))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_breach_checked(self, count: int, service: str, username: str, password: str):
+        if not self.winfo_exists():
+            return
+        self.save_btn.configure(state="normal", text="Save Entry")
+
+        if count > 0:
+            proceed = messagebox.askyesno(
+                "Password found in a data breach",
+                f"This password has appeared in {count:,} known data breaches.\n\n"
+                "It's strongly recommended you use a different, unique password.\n\n"
+                "Save it anyway?"
+            )
+            if not proceed:
+                return
+        elif count == -1:
+            # Network check failed — don't block saving, just let the user know.
+            messagebox.showinfo("Breach check skipped", "Couldn't reach the breach-check service, so this step was skipped.")
+
+        self._finish_save(service, username, password)
+
+    def _finish_save(self, service: str, username: str, password: str):
+        self.vault["entries"][service] = {
+            "username": username,
+            "password": encrypt(self.key, password)
+        }
+        save_vault(self.vault)
+        self.on_save()
+        self.on_update_info()
+        self.destroy()
+
+
+# --- Edit Entry Dialog ---
+
+class EditEntryDialog(ctk.CTkToplevel):
+    """
+    Edit an existing entry's service name, username, and/or password.
+    The password field is pre-filled with the current (decrypted) password
+    so the user can see and tweak it rather than re-typing it blind. The
+    breach check only re-runs if the password was actually changed, so
+    saving an entry where you only fixed a typo in the username doesn't
+    trigger an unnecessary network call.
+    """
+
+    def __init__(self, parent, key, vault, service, current_password, on_save, on_update_info):
+        super().__init__(parent)
+        self.key = key
+        self.vault = vault
+        self.original_service = service
+        self.original_password = current_password
+        self.on_save = on_save
+        self.on_update_info = on_update_info
+        self.title("Edit Entry")
+        self.geometry("440x540")
+        self.resizable(False, False)
+        self.configure(fg_color=BG)
+        self.grab_set()
+        self._build()
+
+    def _build(self):
+        container = ctk.CTkFrame(self, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=24, pady=24)
+
+        ctk.CTkLabel(container, text="Edit Entry", font=(FONT, 18, "bold"), text_color=TEXT).pack(anchor="w")
+        ctk.CTkLabel(container, text="All fields are required.", font=(FONT, 12), text_color=MUTED).pack(anchor="w", pady=(3, 16))
+
+        entry = self.vault["entries"][self.original_service]
+        self.svc_var = ctk.StringVar(value=self.original_service)
+        self.usr_var = ctk.StringVar(value=entry["username"])
+        self.pw_var = ctk.StringVar(value=self.original_password)
+
+        # Service
+        ctk.CTkLabel(container, text="Service", font=(FONT, 12), text_color=MUTED).pack(anchor="w", pady=(8, 4))
+        ctk.CTkEntry(container, height=40, placeholder_text="e.g. github, netflix, spotify", textvariable=self.svc_var, fg_color=CARD, 
+                     border_color=BORDER, border_width=1, corner_radius=6, text_color=TEXT, placeholder_text_color=MUTED, 
+                     font=(FONT, 13)).pack(fill="x", pady=(0, 8))
+
+        # Username
+        ctk.CTkLabel(container, text="Username", font=(FONT, 12), text_color=MUTED).pack(anchor="w", pady=(8, 4))
+        ctk.CTkEntry(container, height=40, placeholder_text="your username or email", textvariable=self.usr_var, fg_color=CARD, 
+                     border_color=BORDER, border_width=1, corner_radius=6, text_color=TEXT, placeholder_text_color=MUTED, 
+                     font=(FONT, 13)).pack(fill="x", pady=(0, 8))
+
+        # Password with toggle and generator
+        ctk.CTkLabel(container, text="Password", font=(FONT, 12), text_color=MUTED).pack(anchor="w", pady=(8, 4))
+        self.pw_entry = PasswordEntry(container, "enter the password", var=self.pw_var, show_strength=True)
+        self.pw_entry.pack(fill="x", pady=(0, 8))
+        self.pw_entry.add_generate_button()
+
+        self.err_var = ctk.StringVar()
+        ctk.CTkLabel(container, textvariable=self.err_var, text_color=RED, font=(FONT, 11), height=18).pack(anchor="w", pady=(4, 0))
+
+        self.save_btn = ctk.CTkButton(container, text="Save Changes", command=self._save, height=40, fg_color=RED, hover_color=RED_HOV, 
+                      text_color="white", corner_radius=6, font=(FONT, 13, "bold"))
+        self.save_btn.pack(fill="x", pady=(8, 0))
+
+    def _save(self):
+        service = self.svc_var.get().strip().lower()
+        username = self.usr_var.get().strip()
+        password = self.pw_var.get()
+
+        if not service or not username or not password:
+            self.err_var.set("All fields are required.")
+            return
+        if service != self.original_service and service in self.vault["entries"]:
+            self.err_var.set(f"'{service}' already exists.")
+            return
+
+        # Only hit the breach-check API if the password actually changed.
+        if password == self.original_password:
+            self._finish_save(service, username, password)
+            return
+
+        self.err_var.set("")
+        self.save_btn.configure(state="disabled", text="Checking for breaches...")
+
+        def worker():
+            count = check_password_breach(password)
+            if self.winfo_exists():
+                self.after(0, lambda: self._on_breach_checked(count, service, username, password))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_breach_checked(self, count: int, service: str, username: str, password: str):
+        if not self.winfo_exists():
+            return
+        self.save_btn.configure(state="normal", text="Save Changes")
+
+        if count > 0:
+            proceed = messagebox.askyesno(
+                "Password found in a data breach",
+                f"This password has appeared in {count:,} known data breaches.\n\n"
+                "It's strongly recommended you use a different, unique password.\n\n"
+                "Save it anyway?"
+            )
+            if not proceed:
+                return
+        elif count == -1:
+            messagebox.showinfo("Breach check skipped", "Couldn't reach the breach-check service, so this step was skipped.")
+
+        self._finish_save(service, username, password)
+
+    def _finish_save(self, service: str, username: str, password: str):
+        if service != self.original_service:
+            del self.vault["entries"][self.original_service]
 
         self.vault["entries"][service] = {
             "username": username,
