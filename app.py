@@ -1,4 +1,5 @@
 import customtkinter as ctk
+import tkinter as tk
 from tkinter import messagebox
 import pyperclip
 import os
@@ -35,6 +36,44 @@ def copy_with_autoclear(widget, text: str, seconds: int = CLIPBOARD_CLEAR_SECOND
             pass
 
     widget.after(seconds * 1000, _clear)
+
+
+class Tooltip:
+    """
+    Small hover label for icon-only buttons whose purpose isn't obvious
+    from a symbol alone (e.g. the 🔑 generate button vs the 👁 show/hide
+    button). Attach with Tooltip(some_button, "What it does").
+    """
+    def __init__(self, widget, text: str):
+        self.widget = widget
+        self.text = text
+        self.tip = None
+        widget.bind("<Enter>", self._show, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<Destroy>", self._hide, add="+")
+
+    def _show(self, event=None):
+        if self.tip is not None or not self.text:
+            return
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        try:
+            self.tip.wm_attributes("-topmost", True)
+        except Exception:
+            pass
+        label = tk.Label(self.tip, text=self.text, bg="#1a1a1a", fg="#e5e5e5",
+                          font=(FONT, 10), padx=8, pady=4, borderwidth=0)
+        label.pack()
+        self.tip.update_idletasks()
+        tip_w = self.tip.winfo_width()
+        self.tip.wm_geometry(f"+{x - tip_w // 2}+{y}")
+
+    def _hide(self, event=None):
+        if self.tip is not None:
+            self.tip.destroy()
+            self.tip = None
 
 
 ctk.set_appearance_mode("dark")
@@ -136,6 +175,7 @@ class PasswordEntry(ctk.CTkFrame):
         self.toggle_btn = ctk.CTkButton(self, text="👁", width=40, height=40, fg_color="transparent", hover_color=RED_DIM, 
                                         text_color=MUTED, corner_radius=8, font=(FONT, 16), command=self._toggle_password)
         self.toggle_btn.pack(side="right")
+        Tooltip(self.toggle_btn, "Show/hide password")
         
         # Strength meter (if enabled)
         self.strength_label = None
@@ -149,6 +189,7 @@ class PasswordEntry(ctk.CTkFrame):
                                      hover_color=RED_DIM, text_color=MUTED, corner_radius=8, 
                                      font=(FONT, 16), command=self._generate_password)
         self.gen_btn.pack(side="right", padx=(0, 4))
+        Tooltip(self.gen_btn, "Generate a strong password")
     
     def _generate_password(self):
         """Generate a strong password and set it."""
@@ -237,22 +278,41 @@ class LoginScreen(ctk.CTkFrame):
             
         ctk.CTkLabel(col, text=status, font=(FONT, 13), text_color=SUCCESS if not vault_exists() else MUTED).pack(pady=(0, 30))
 
+        self.pw_var = ctk.StringVar()
+        self.confirm_var = ctk.StringVar()
+
+        # Unified strength meter — shown once, above both the password and
+        # confirm boxes, tracking the master password field as you type.
+        # (A second meter tied to the confirm box was confusing: it only
+        # appeared once you started retyping, and measured the copy rather
+        # than the password itself.)
+        self.strength_fill = None
+        self.strength_text = None
+        if not vault_exists():
+            meter = ctk.CTkFrame(col, fg_color="transparent")
+            meter.pack(fill="x", pady=(0, 14))
+            self.strength_track = ctk.CTkFrame(meter, height=4, fg_color=BORDER, corner_radius=2)
+            self.strength_track.pack(fill="x")
+            self.strength_fill = ctk.CTkFrame(self.strength_track, height=4, fg_color=BORDER, corner_radius=2, width=0)
+            self.strength_fill.pack(side="left", fill="y")
+            self.strength_text = ctk.CTkLabel(meter, text="", font=(FONT, 11), text_color=MUTED, anchor="w", height=16)
+            self.strength_text.pack(anchor="w", pady=(4, 0))
+            self.pw_var.trace("w", lambda *a: self._update_strength_meter())
+
         # Master Password
         ctk.CTkLabel(col, text="Master Password", font=(FONT, 13, "bold"), text_color=TEXT).pack(anchor="w", pady=(0, 6))
         
-        self.pw_var = ctk.StringVar()
         self.pw_entry = PasswordEntry(col, "Enter your master password", var=self.pw_var)
         self.pw_entry.pack(fill="x", pady=(0, 16))
         self.pw_entry.bind("<Return>", lambda e: self._submit())
 
         # Confirm Password (only for new vault)
-        self.confirm_var = ctk.StringVar()
         self.confirm_entry = None
 
         if not vault_exists():
             ctk.CTkLabel(col, text="Confirm Password", font=(FONT, 13, "bold"), text_color=TEXT).pack(anchor="w", pady=(0, 6))
             
-            self.confirm_entry = PasswordEntry(col, "Re-enter to confirm", var=self.confirm_var, show_strength=True)
+            self.confirm_entry = PasswordEntry(col, "Re-enter to confirm", var=self.confirm_var)
             self.confirm_entry.pack(fill="x", pady=(0, 16))
             self.confirm_entry.bind("<Return>", lambda e: self._submit())
 
@@ -280,6 +340,21 @@ class LoginScreen(ctk.CTkFrame):
 
         # Focus the password entry
         self.pw_entry.focus()
+
+    def _update_strength_meter(self):
+        """Update the unified strength meter above the password fields."""
+        if self.strength_fill is None:
+            return
+        password = self.pw_var.get()
+        if not password:
+            self.strength_fill.configure(fg_color=BORDER, width=0)
+            self.strength_text.configure(text="")
+            return
+        label, score, color = check_password_strength(password)
+        track_width = self.strength_track.winfo_width() or 400
+        fill_width = min(int((score + 1) / 5 * track_width), track_width)
+        self.strength_fill.configure(fg_color=color, width=fill_width)
+        self.strength_text.configure(text=f"Strength: {label}", text_color=color)
 
     def _open_recovery(self):
         RecoveryScreen(self, self._on_recovery_success)
@@ -372,7 +447,7 @@ class LoginScreen(ctk.CTkFrame):
         """Display recovery codes to the user."""
         dialog = ctk.CTkToplevel(self)
         dialog.title("🔑 Recovery Codes")
-        dialog.geometry("450x400")
+        dialog.geometry("450x480")
         dialog.configure(fg_color=BG)
         dialog.grab_set()
         
@@ -385,8 +460,9 @@ class LoginScreen(ctk.CTkFrame):
                      text="Store these codes securely. Each can be used once\nto reset your master password.",
                      font=(FONT, 12), text_color=MUTED).pack(anchor="w", pady=(4, 16))
         
-        # Code grid
-        code_frame = ctk.CTkFrame(container, fg_color=CARD, corner_radius=8)
+        # Code grid — scrollable so all 10 codes plus the button row below
+        # always fit in the fixed-size dialog, regardless of font/DPI scaling.
+        code_frame = ctk.CTkScrollableFrame(container, fg_color=CARD, corner_radius=8)
         code_frame.pack(fill="both", expand=True)
         
         for i, code_data in enumerate(codes):
@@ -493,18 +569,21 @@ class MainApp(ctk.CTkFrame):
 
         # Navigation buttons
         self.sb_btns = {}
-        nav_items = [("passwords", "🗝"), ("settings", "⚙")]
-        for key_name, icon in nav_items:
+        nav_items = [("passwords", "🗝", "Passwords"), ("settings", "⚙", "Settings")]
+        for key_name, icon, tip in nav_items:
             btn = ctk.CTkButton(self.sb, text=icon, width=48, height=48, fg_color="transparent", hover_color=RED_DIM, text_color=MUTED, 
                                 font=(FONT, 22), corner_radius=8, command=lambda p=key_name: self._show(p))
             btn.pack(pady=4, padx=16)
             self.sb_btns[key_name] = btn
+            Tooltip(btn, tip)
 
         # Lock button
         ctk.CTkFrame(self.sb, fg_color="transparent").pack(expand=True)
         ctk.CTkFrame(self.sb, height=1, fg_color=BORDER).pack(fill="x", padx=14)
-        ctk.CTkButton(self.sb, text="⏻", width=48, height=48, fg_color="transparent", hover_color=RED_DIM, text_color=MUTED, 
-                      font=(FONT, 22), corner_radius=8, command=self._lock).pack(pady=(8, 14), padx=16)
+        lock_btn = ctk.CTkButton(self.sb, text="⏻", width=48, height=48, fg_color="transparent", hover_color=RED_DIM, text_color=MUTED, 
+                      font=(FONT, 22), corner_radius=8, command=self._lock)
+        lock_btn.pack(pady=(8, 14), padx=16)
+        Tooltip(lock_btn, "Lock vault")
 
     def _show(self, panel: str):
         for name, btn in self.sb_btns.items():
@@ -636,9 +715,11 @@ class MainApp(ctk.CTkFrame):
                       corner_radius=6, font=(FONT, 11)).pack(side="left", padx=(0, 6))
 
         # Delete button
-        ctk.CTkButton(btn_frame, text="✕", width=32, height=32, command=lambda s=service: self._delete_entry(s), 
+        delete_btn = ctk.CTkButton(btn_frame, text="✕", width=32, height=32, command=lambda s=service: self._delete_entry(s), 
                       fg_color="transparent", hover_color=RED_DIM, border_width=1, border_color=BORDER, text_color=MUTED, 
-                      corner_radius=6, font=(FONT, 11)).pack(side="left")
+                      corner_radius=6, font=(FONT, 11))
+        delete_btn.pack(side="left")
+        Tooltip(delete_btn, "Delete entry")
 
     # --- Settings Panel ---
 
